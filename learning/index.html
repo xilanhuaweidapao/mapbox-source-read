@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Learning Demos</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #0b1020;
+        color: #e8eefc;
+      }
+      main {
+        max-width: 980px;
+        margin: 32px auto;
+        padding: 0 16px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 6px 0 16px;
+        color: rgba(232, 238, 252, 0.85);
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      li {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 10px;
+        padding: 12px 12px;
+      }
+      a {
+        color: #9ec1ff;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .title {
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .desc {
+        font-size: 12px;
+        color: rgba(232, 238, 252, 0.75);
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>learning/ 最小示例导航</h1>
+      <p>建议用静态服务器打开（例如 <code>python -m http.server</code>），避免 <code>file://</code> 下的模块/Worker 限制。</p>
+      <ul>
+        <li>
+          <div class="title"><a href="./00-hello-webgl/index.html">00 - hello-webgl</a></div>
+          <div class="desc">WebGL 最小闭环：画三角形</div>
+        </li>
+        <li>
+          <div class="title"><a href="./01-program/index.html">01 - program</a></div>
+          <div class="desc">封装 Program：缓存 location，切换 program</div>
+        </li>
+        <li>
+          <div class="title"><a href="./02-buffers/index.html">02 - buffers</a></div>
+          <div class="desc">VBO/IBO + drawElements + stride/offset</div>
+        </li>
+        <li>
+          <div class="title"><a href="./03-texture/index.html">03 - texture</a></div>
+          <div class="desc">纹理上传：filter/premultiply/flipY</div>
+        </li>
+        <li>
+          <div class="title"><a href="./04-transform/index.html">04 - transform</a></div>
+          <div class="desc">Mercator 2D 相机：pan/zoom/bearing</div>
+        </li>
+        <li>
+          <div class="title"><a href="./05-tiles-raster/index.html">05 - tiles-raster</a></div>
+          <div class="desc">可视 tiles + 并发队列 + LRU 缓存（伪瓦片）</div>
+        </li>
+        <li>
+          <div class="title"><a href="./06-style-min/index.html">06 - style-min</a></div>
+          <div class="desc">最小 style JSON：background/raster/circle</div>
+        </li>
+        <li>
+          <div class="title"><a href="./07-vector-bucket/index.html">07 - vector-bucket</a></div>
+          <div class="desc">GeoJSON → bucket（positions/indices/attrs）</div>
+        </li>
+        <li>
+          <div class="title"><a href="./08-worker-transfer/index.html">08 - worker-transfer</a></div>
+          <div class="desc">buildBucket 放 worker + transferable</div>
+        </li>
+        <li>
+          <div class="title"><a href="./09-stencil-clip/index.html">09 - stencil-clip</a></div>
+          <div class="desc">Stencil tile clipping（两 pass）</div>
+        </li>
+        <li>
+          <div class="title"><a href="./10-symbol-collision/index.html">10 - symbol-collision</a></div>
+          <div class="desc">Label atlas + collision + fade</div>
+        </li>
+        <li>
+          <div class="title"><a href="./11-new-features/index.html">11 - new-features</a></div>
+          <div class="desc">拾取/截图/调试 overlay</div>
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>
+
