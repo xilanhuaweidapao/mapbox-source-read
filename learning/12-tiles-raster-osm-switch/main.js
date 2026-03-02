@@ -3,19 +3,47 @@ import { Transform2D } from "../_common/Transform2D.js";
 import { createPanel } from "../_common/ui.js";
 
 const TILE_SIZE = 256;
-const OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const OSM_MAX_ZOOM = 19;
+
+const TILE_SOURCES = {
+  standard: {
+    id: "standard",
+    label: "OSM Standard",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    subdomains: [""],
+    maxZoom: 19,
+  },
+  hot: {
+    id: "hot",
+    label: "OSM HOT",
+    url: "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+    subdomains: ["a", "b", "c"],
+    maxZoom: 19,
+  },
+};
+
+let sourceId = "standard";
+let currentSource = TILE_SOURCES[sourceId];
 
 const canvas = document.getElementById("c");
 const gl = mustGetContext(canvas, { antialias: true, alpha: true });
 
-// ---------- UI ----------
-const panel = createPanel({ title: "05 - Tiles Raster" });
+const panel = createPanel({ title: "12 - Tiles Raster OSM Switch" });
 let maxParallel = 8;
 let maxCache = 120;
 let showBorders = true;
 let rasterOpacity = 1.0;
 
+panel.addSelect(
+  "tileSource",
+  Object.values(TILE_SOURCES).map((s) => ({ label: s.label, value: s.id })),
+  sourceId,
+  (next) => {
+    if (!TILE_SOURCES[next] || next === sourceId) return;
+    sourceId = next;
+    currentSource = TILE_SOURCES[sourceId];
+    tiles.clear();
+  },
+);
 panel.addSlider("maxParallel", { min: 1, max: 32, step: 1, value: maxParallel }, (v) => (maxParallel = v));
 panel.addSlider("maxCache", { min: 20, max: 400, step: 1, value: maxCache }, (v) => (maxCache = v));
 panel.addCheckbox("showBorders", showBorders, (v) => (showBorders = v));
@@ -23,7 +51,6 @@ panel.addSlider("opacity", { min: 0, max: 1, step: 0.01, value: rasterOpacity },
 panel.addSeparator();
 const stats = panel.addText("Stats", "");
 
-// ---------- Transform (pan/zoom/bearing) ----------
 const transform = new Transform2D({
   width: 2,
   height: 2,
@@ -36,16 +63,13 @@ const transform = new Transform2D({
 
 installInteractions({ canvas, transform });
 
-// ---------- Shaders ----------
-// 使用 unit quad + per-tile origin/scale，把每个 tile 映射到 mercator 坐标空间
 const VS_TILE = `
 attribute vec2 a_unit;
 varying vec2 v_uv;
 
 uniform mat4 u_matrix;
-uniform vec2 u_origin; // tile 左上角（mercator）
-uniform vec2 u_scale;  // tile 尺寸（mercator）
-
+uniform vec2 u_origin;
+uniform vec2 u_scale;
 void main() {
   vec2 merc = u_origin + a_unit * u_scale;
   gl_Position = u_matrix * vec4(merc, 0.0, 1.0);
@@ -85,8 +109,6 @@ void main() { gl_FragColor = u_color; }
 const progTile = createProgram(gl, VS_TILE, FS_TILE);
 const progLine = createProgram(gl, VS_LINE, FS_LINE);
 
-// ---------- Shared geometry (unit quad) ----------
-// a_unit: (0,0)(1,0)(1,1)(0,1)
 const quad = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
 const quadIdxTriangles = new Uint16Array([0, 1, 2, 0, 2, 3]);
 const quadIdxLineLoop = new Uint16Array([0, 1, 2, 3]);
@@ -104,9 +126,10 @@ gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboLine);
 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, quadIdxLineLoop, gl.STATIC_DRAW);
 
 class TileStore {
-  constructor(gl) {
+  constructor(gl, loadTileFn) {
     this.gl = gl;
-    this._entries = new Map(); // key -> {texture, lastUsedFrame, state}
+    this._loadTileFn = loadTileFn;
+    this._entries = new Map();
     this._queue = [];
     this._inFlight = 0;
     this._maxParallel = 8;
@@ -117,6 +140,7 @@ class TileStore {
   setMaxParallel(n) {
     this._maxParallel = n;
   }
+
   setMaxCache(n) {
     this._maxCache = n;
   }
@@ -137,6 +161,15 @@ class TileStore {
     return this._queue.length;
   }
 
+  clear() {
+    for (const entry of this._entries.values()) {
+      if (entry.texture) this.gl.deleteTexture(entry.texture);
+    }
+    this._entries.clear();
+    this._queue.length = 0;
+    this.lastEvicted = 0;
+  }
+
   markAndRequest(visibleTiles, frameId) {
     for (const t of visibleTiles) {
       const existing = this._entries.get(t.key);
@@ -145,7 +178,6 @@ class TileStore {
         continue;
       }
 
-      // 新 tile：加入缓存占位并排队请求
       this._entries.set(t.key, {
         state: "queued",
         lastUsedFrame: frameId,
@@ -166,7 +198,7 @@ class TileStore {
       entry.state = "loading";
       this._inFlight++;
 
-      fetchOsmTileImage(t)
+      this._loadTileFn(t)
         .then((img) => {
           const tex = this.gl.createTexture();
           this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
@@ -177,12 +209,11 @@ class TileStore {
           this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, 0);
           this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, img);
 
-          const now = performance.now();
           const existing = this._entries.get(t.key);
           if (existing) {
             existing.state = "ready";
             existing.texture = tex;
-            existing.loadedAt = now;
+            existing.loadedAt = performance.now();
           } else {
             this.gl.deleteTexture(tex);
           }
@@ -203,14 +234,12 @@ class TileStore {
     this.lastEvicted = 0;
     if (this._entries.size <= this._maxCache) return;
 
-    // 简单 LRU：按 lastUsedFrame 从小到大淘汰
     const items = Array.from(this._entries.entries());
     items.sort((a, b) => a[1].lastUsedFrame - b[1].lastUsedFrame);
 
     const target = this._entries.size - this._maxCache;
     for (let i = 0; i < target; i++) {
       const [key, entry] = items[i];
-      // 保护：本帧刚用过的不淘汰（避免边界抖动）
       if (entry.lastUsedFrame === frameId) continue;
       if (entry.texture) this.gl.deleteTexture(entry.texture);
       this._entries.delete(key);
@@ -219,8 +248,7 @@ class TileStore {
   }
 }
 
-// ---------- Tile Store (queue + cache + textures) ----------
-const tiles = new TileStore(gl);
+const tiles = new TileStore(gl, (tile) => fetchOsmTileImage(tile, currentSource));
 
 let frameId = 0;
 function frame() {
@@ -234,7 +262,7 @@ function frame() {
   gl.clearColor(0.05, 0.07, 0.12, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  const tileZ = Math.max(0, Math.min(OSM_MAX_ZOOM, Math.floor(transform.zoom)));
+  const tileZ = Math.max(0, Math.min(currentSource.maxZoom, Math.floor(transform.zoom)));
   const visible = getVisibleTiles(transform, tileZ);
 
   tiles.setMaxParallel(maxParallel);
@@ -243,7 +271,6 @@ function frame() {
 
   const m = transform.getMercatorToClipMatrix();
 
-  // draw raster tiles
   gl.useProgram(progTile);
   bindCommon(progTile, vbo, iboTri);
   gl.uniformMatrix4fv(gl.getUniformLocation(progTile, "u_matrix"), false, m);
@@ -261,7 +288,6 @@ function frame() {
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
   }
 
-  // optional borders
   if (showBorders) {
     gl.useProgram(progLine);
     bindCommon(progLine, vbo, iboLine);
@@ -276,10 +302,9 @@ function frame() {
 
   const c = transform.getCenter();
   stats.set(
-    `z=${tileZ} visible=${visible.length}\n` +
-      `center=(${c.lng.toFixed(4)}, ${c.lat.toFixed(4)}) zoom=${transform.zoom.toFixed(2)} bearing=${transform.bearing.toFixed(
-        1,
-      )}°\n` +
+    `source=${currentSource.label}\n` +
+      `z=${tileZ} visible=${visible.length}\n` +
+      `center=(${c.lng.toFixed(4)}, ${c.lat.toFixed(4)}) zoom=${transform.zoom.toFixed(2)} bearing=${transform.bearing.toFixed(1)}deg\n` +
       `cache=${tiles.cacheSize()} inFlight=${tiles.inFlightCount()} queued=${tiles.queueCount()} evicted=${tiles.lastEvicted}`,
   );
 
@@ -296,7 +321,6 @@ function bindCommon(program, vbo, ibo) {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
 }
 
-// 计算可视 tiles：把屏幕四角反投影到 mercator，再映射到 tile x/y 范围
 function getVisibleTiles(transform, z) {
   const tilesAtZ = 1 << z;
   const corners = [
@@ -306,10 +330,10 @@ function getVisibleTiles(transform, z) {
     transform.screenToMercator(transform.width, transform.height),
   ];
 
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
   for (const p of corners) {
     minX = Math.min(minX, p.x);
     maxX = Math.max(maxX, p.x);
@@ -317,7 +341,6 @@ function getVisibleTiles(transform, z) {
     maxY = Math.max(maxY, p.y);
   }
 
-  // Y 方向 Mercator 理论范围 [0,1]，这里做 clamp，避免极端拖拽出现负值
   minY = Math.max(0, minY);
   maxY = Math.min(1, maxY);
 
@@ -333,7 +356,7 @@ function getVisibleTiles(transform, z) {
       const wrap = Math.floor(tx / tilesAtZ);
       const x = ((tx % tilesAtZ) + tilesAtZ) % tilesAtZ;
       const y = ty;
-      const key = `${z}/${wrap}/${x}/${y}`;
+      const key = `${z}/${sourceId}/${wrap}/${x}/${y}`;
       out.push({
         key,
         z,
@@ -386,9 +409,19 @@ function installInteractions({ canvas, transform }) {
   });
 }
 
-function fetchOsmTileImage(tile) {
-  const url = OSM_TILE_URL.replace("{z}", String(tile.z)).replace("{x}", String(tile.x)).replace("{y}", String(tile.y));
+function fetchOsmTileImage(tile, source) {
+  const url = tileUrlForSource(tile, source);
   return loadImageWithCORS(url).then((img) => (typeof createImageBitmap === "function" ? createImageBitmap(img) : img));
+}
+
+function tileUrlForSource(tile, source) {
+  const domains = source.subdomains?.length ? source.subdomains : [""];
+  const subdomain = domains[Math.abs(tile.x + tile.y) % domains.length] || "";
+  return source.url
+    .replace("{s}", subdomain)
+    .replace("{z}", String(tile.z))
+    .replace("{x}", String(tile.x))
+    .replace("{y}", String(tile.y));
 }
 
 function loadImageWithCORS(url) {
